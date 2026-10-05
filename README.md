@@ -144,7 +144,6 @@ python weekly_digest.py                    # 生成清单到桌面
 | 文件 | 内容 |
 |---|---|
 | [docs/使用手册.md](docs/使用手册.md) | **完整文档**：操作步骤、定时任务、配置详解、去重机制、排错、设计依据 |
-| [docs/方案-重整版.md](docs/方案-重整版.md) | 最初的设计方案 |
 | [docs/news-pipeline-research.md](docs/news-pipeline-research.md) | RSSHub 路由与开源工具调研 |
 
 ## 这个工作流刻意不做的事
