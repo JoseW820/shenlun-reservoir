@@ -15,18 +15,113 @@ feed 只含 1-2 天的源）不会再丢 6/7 的内容。
     python fetch_daily.py --only banyuetan-jicengzhili,people-paper
     python fetch_daily.py --keep-running    # 跑完不关 RSSHub
     python fetch_daily.py --stats           # 只看索引现状，不抓取
+    python fetch_daily.py --check-routes    # 源健康体检（改配置后跑一次）
 """
 import argparse
 import json
+import os
+import shutil
 import sys
 import time
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-import weekly_digest as wd   # noqa: E402  （它的 __main__ 守卫保证不会自动执行）
+import gk_core as wd   # noqa: E402  共享核心：抓取/解析/去重/摘要/索引/Zotero
+
+
+def check_routes(cfg):
+    """源健康体检：探测配置里所有路由（含停用源）的可用性，不写索引。
+
+    替代原 test-routes.ps1 —— 复用同一套 feed 抓取/解析逻辑，
+    不再用 PowerShell 重复实现。结果同时写 tools/route-test-results.json。
+    """
+    base = str(cfg['baseUrl']).rstrip('/')
+    timeout = int(cfg.get('timeoutSec', 120))
+    sources = list(cfg['sources'])
+
+    proc, started = wd.start_rsshub(cfg)
+    if not wd.port_open('127.0.0.1', 1200):
+        wd.log('RSSHub 不可用，终止', 'err')
+        return 1
+
+    def probe(src):
+        t0 = time.time()
+        ms = lambda: int((time.time() - t0) * 1000)
+        try:
+            raw = wd.fetch_bytes(base + str(src['path']), timeout)
+            items = wd.parse_feed(raw)
+            avg = 0
+            if items:
+                lens = [len(wd.strip_html(it.get('raw') or '')) for it in items[:5]]
+                lens = [n for n in lens if n]
+                avg = sum(lens) // len(lens) if lens else 0
+            return src, ('ok' if items else 'empty'), len(items), avg, ms(), ''
+        except urllib.error.HTTPError as exc:
+            return src, 'error', 0, 0, ms(), 'HTTP %s' % exc.code
+        except Exception as exc:
+            return src, 'error', 0, 0, ms(), str(exc)[:60]
+
+    try:
+        with ThreadPoolExecutor(max_workers=min(8, len(sources))) as ex:
+            results = [f.result() for f in as_completed(
+                [ex.submit(probe, s) for s in sources])]
+    finally:
+        if started:
+            wd.stop_rsshub(proc)
+
+    order = {s['id']: i for i, s in enumerate(sources)}
+    results.sort(key=lambda r: order[r[0]['id']])
+
+    print()
+    print('%-5s %-22s %-26s %-6s %4s %6s %7s  %s'
+          % ('类型', '来源', '路径', '状态', '条目', '均正文', '耗时ms', '备注'))
+    print('-' * 96)
+    ok_n = 0
+    report = []
+    for src, status, n, avg, ms, err in results:
+        if status == 'ok':
+            ok_n += 1
+        enabled = '' if src.get('enabled') else '[已停用] '
+        hint = err or ('路由疑似失效（官网改版）' if status != 'ok' else '')
+        print('%-5s %-22s %-26s %-6s %4d %6d %7d  %s%s'
+              % (src['type'], src['name'], src['path'], status, n, avg, ms,
+                 enabled, hint))
+        report.append({'id': src['id'], 'name': src['name'], 'type': src['type'],
+                       'path': src['path'], 'enabled': bool(src.get('enabled')),
+                       'status': status, 'itemCount': n, 'avgBodyChars': avg,
+                       'elapsedMs': ms, 'error': err or None})
+    print('-' * 96)
+    print('汇总: %d/%d 可用' % (ok_n, len(results)))
+
+    out = HERE / 'tools' / 'route-test-results.json'
+    out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+    print('结果文件: %s' % out)
+    return 0 if ok_n else 2
+
+
+def backup_index(cfg, keep=4):
+    """索引是「永不删除」的唯一存储层 —— 所以它自己必须有备份。
+
+    每次成功抓取后复制一份到 backups/（按天命名，同一天多次跑只留一份），
+    保留最近 keep 份。
+    """
+    src = Path(wd.index_path(cfg))
+    bdir = HERE / 'backups'
+    bdir.mkdir(exist_ok=True)
+    dst = bdir / ('index-%s.sqlite' % datetime.now().strftime('%Y%m%d'))
+    shutil.copy2(src, dst)
+    olds = sorted(bdir.glob('index-*.sqlite'),
+                  key=lambda f: f.stat().st_mtime)[:-keep]
+    for f in olds:
+        try:
+            f.unlink()
+        except OSError:
+            pass
+    return dst
 
 
 def show_index(cfg):
@@ -36,7 +131,9 @@ def show_index(cfg):
     print('索引：%s' % wd.index_path(cfg))
     print('  总计     : %d 条' % total)
     for k, v in sorted(by_status.items()):
-        label = {'new': '待展示', 'shown': '已展示', 'in_zotero': '已在Zotero'}.get(k, k)
+        label = {'new': '待展示', 'shown': '已展示', 'in_zotero': '已在Zotero',
+                 'junk': '形态噪音', 'dup': '跨源重复',
+                 'stale': '超龄积压', 'archived': '停用源存量'}.get(k, k)
         print('  %-9s: %d 条' % (label, v))
     if span and span[0]:
         print('  时间跨度 : %s ~ %s' % (str(span[0])[:10], str(span[1])[:10]))
@@ -58,13 +155,18 @@ def main():
     ap.add_argument('--keep-running', action='store_true', help='跑完不关 RSSHub')
     ap.add_argument('--only', default='', help='只跑指定 id，逗号分隔')
     ap.add_argument('--stats', action='store_true', help='只看索引现状，不抓取')
+    ap.add_argument('--check-routes', action='store_true',
+                    help='源健康体检：探测全部路由可用性（含停用源），不写索引')
     args = ap.parse_args()
 
     cfg = json.loads(Path(args.config).read_text(encoding='utf-8-sig'))
+    wd.setup_logfile('fetch')
 
     if args.stats:
         show_index(cfg)
         return 0
+    if args.check_routes:
+        return check_routes(cfg)
 
     base = str(cfg['baseUrl']).rstrip('/')
     timeout = int(cfg.get('timeoutSec', 120))
@@ -87,7 +189,7 @@ def main():
 
     # 判重基准：Zotero + 索引
     zot_urls, zot_titles, zot_ok = wd.load_zotero_keys(
-        cfg.get('zoteroDb', str(Path.home() / 'Zotero' / 'zotero.sqlite')))
+        cfg.get('zoteroDb') or os.path.expanduser(r'~\Zotero\zotero.sqlite'))
     con = wd.open_index(cfg)
     idx_urls, idx_titles = wd.index_keys(con)
     total0, status0, _ = wd.index_report(con)
@@ -113,21 +215,32 @@ def main():
     seen_urls, seen_titles = set(), set()
 
     try:
-        for src in sources:
-            url = base + str(src['path'])
-            label = src['name']
+        # 抓取是网络 IO，串行要 ~80 秒；并行后瓶颈只剩最慢的那个源。
+        # 去重/写库仍在主线程串行做，判定逻辑与串行版完全一致。
+        def _fetch_one(src):
             try:
-                raw = wd.fetch_bytes(url, timeout)
-                items = wd.parse_feed(raw)
+                raw = wd.fetch_bytes(base + str(src['path']), timeout)
+                return src['id'], wd.parse_feed(raw), None
             except urllib.error.HTTPError as exc:
-                note = ('路由疑似失效（解析到 0 条，RSSHub 返回 503）'
-                        if exc.code == 503 else '')
-                wd.log('%s: HTTP %s %s' % (label, exc.code, note), 'err')
-                per_source.append((label, 0, 0, 'HTTP %s' % exc.code))
-                continue
+                return src['id'], None, 'HTTP %s' % exc.code
             except Exception as exc:
-                wd.log('%s: 抓取失败 %s' % (label, str(exc)[:60]), 'err')
-                per_source.append((label, 0, 0, str(exc)[:40]))
+                return src['id'], None, str(exc)[:60]
+
+        fetched_map = {}
+        with ThreadPoolExecutor(max_workers=min(8, len(sources))) as ex:
+            futs = [ex.submit(_fetch_one, s) for s in sources]
+            for fut in as_completed(futs):
+                sid, items, err = fut.result()
+                fetched_map[sid] = (items, err)
+
+        for src in sources:
+            label = src['name']
+            items, err = fetched_map.get(src['id'], (None, '未执行'))
+            if err is not None:
+                note = ('路由疑似失效（解析到 0 条，RSSHub 返回 503）'
+                        if err == 'HTTP 503' else '')
+                wd.log('%s: %s %s' % (label, err, note), 'err')
+                per_source.append((label, 0, 0, err))
                 continue
 
             stats['seen'] += len(items)
@@ -191,6 +304,13 @@ def main():
 
     total1, status1, span1 = wd.index_report(con)
     con.close()
+
+    if not args.dry_run:
+        try:
+            dst = backup_index(cfg)
+            wd.log('索引已备份 -> %s' % dst, 'ok')
+        except Exception as exc:
+            wd.log('索引备份失败：%s' % exc, 'warn')
 
     print()
     print('源抓取明细')

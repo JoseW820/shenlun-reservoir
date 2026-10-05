@@ -113,7 +113,7 @@ python weekly_digest.py                    # 生成清单到桌面
 | 现象 | 原因与处理 |
 |---|---|
 | 某源显示 `HTTP 503` | 官网改版导致 RSSHub 选择器匹配 0 条。**不是网络问题**。到 RSSHub 提 issue，或把该源 `enabled` 设为 `false` |
-| 清单少于 15 条 | 正常。各源独立取配额，某源那周没内容名额就浪费了，**不会从别的源补货** |
+| 清单少于 15 条 | 一般不会：配额取不满时会从剩余候选**自动回填**。仍是 0 条才说明索引被挑完了，跑 `python fetch_daily.py --stats` 看待展示余量 |
 | 清单是空的 | 跑 `python fetch_daily.py --stats` 看索引里还有多少待展示 |
 | 计划任务结果非 0 | 抓取返回 **2** = 所有源都失败，通常是没联网 |
 | `pnpm install` 报 `NO_TTY` | 先设 `$env:CI='true'` |
