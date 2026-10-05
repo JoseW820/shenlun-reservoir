@@ -1,0 +1,27 @@
+# ---- 个人配置与数据（绝对不要提交）----
+sources.json
+index.sqlite
+index.sqlite-wal
+index.sqlite-shm
+seen_ledger.json
+route-test-results.json
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- 输出产物 ----
+*_素材清单.html
+*_素材清单.md
+*_素材清单.json
