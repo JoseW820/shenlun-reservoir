@@ -63,6 +63,8 @@ python weekly_digest.py                    # 生成清单到桌面
 清单是一份 HTML（另有 MD / JSON），每条含**标题、来源、日期、摘要、「建议归入」哪个 Zotero 集合**。
 日常就三个动作：**打开桌面 HTML → 挑感兴趣的 → 点开链接、`Ctrl+Shift+S` 用 Zotero 存档**。
 
+![清单示例](docs/images/list-preview.png)
+
 ## 工作原理
 
 | 层 | 脚本 | 频率 | 干什么 |
