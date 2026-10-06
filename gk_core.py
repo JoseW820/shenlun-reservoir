@@ -759,23 +759,34 @@ def index_mark(con, ids, status, list_id=None, when=None):
     return cur.rowcount
 
 
-def index_age_out(con, stale_after_days, enabled_ids, now):
+def index_age_out(con, stale_after_days, enabled_ids, now, by_type=None):
     """积压治理（只改状态、不删数据，把 status 改回 'new' 即可恢复）：
 
       1. 超龄未展示的 -> 'stale'
          挑选按日期倒序、每源只取最新 quota 条，只要源还在更新，
          老条目数学上永远浮不上来 —— 不如明确标出来，别冒充「待展示」。
+         阈值按类型分：stale_after_days 是默认天数，by_type 可按类型覆盖
+         （案例素材不过时给 90 天，政策类有时效给 28 天）。
       2. 停用源的存量 -> 'archived'
          源停用后这些条目被永久冻结：不展示、不清理。
 
     返回 {'stale': [id...], 'archived': [id...]}，由调用方决定是否落库（--dry-run 不落）。
     """
     out = {'stale': [], 'archived': []}
-    if stale_after_days > 0:
-        cutoff = (now - timedelta(days=stale_after_days)).isoformat(timespec='seconds')
-        out['stale'] = [r[0] for r in con.execute(
-            "SELECT id FROM items WHERE status='new' "
-            "AND COALESCE(published, fetched) < ?", (cutoff,))]
+    by_type = by_type or {}
+    cutoffs = {}
+    for typ, days in by_type.items():
+        if days > 0:
+            cutoffs[typ] = (now - timedelta(days=days)).isoformat(timespec='seconds')
+    default_cutoff = ((now - timedelta(days=stale_after_days)).isoformat(timespec='seconds')
+                      if stale_after_days > 0 else None)
+    if default_cutoff or cutoffs:
+        for rid, typ, pub in con.execute(
+                "SELECT id, type, COALESCE(published, fetched) FROM items "
+                "WHERE status='new'"):
+            cutoff = cutoffs.get(typ, default_cutoff)
+            if cutoff and pub and pub < cutoff:
+                out['stale'].append(rid)
     if enabled_ids:
         marks = ','.join('?' * len(enabled_ids))
         out['archived'] = [r[0] for r in con.execute(

@@ -53,8 +53,11 @@
     "maxSourceChars": 20000
   },
   "backlog": {
-    "_doc": "积压治理。超过 staleAfterDays 天仍未展示的条目标记 stale，不再参与挑选（不删数据，把 status 改回 new 即可恢复）。停用源的存量自动标记 archived。设为 0 可关闭。",
-    "staleAfterDays": 28
+    "_doc": "积压治理。超过阈值仍未展示的条目标记 stale，不再参与挑选（不删数据，把 status 改回 new 即可恢复）。staleAfterDays 是默认天数；staleAfterDaysByType 按类型覆盖——案例素材不过时所以案例型给 90 天，政策类有时效保持 28 天。停用源的存量自动标记 archived。staleAfterDays 设为 0 可关闭。",
+    "staleAfterDays": 28,
+    "staleAfterDaysByType": {
+      "案例型": 90
+    }
   },
   "titleFilter": {
     "_doc": "hardBlock 命中即剔除；softBlock 命中时，若标题同时含 policySignals 任一词则保留。",

@@ -65,6 +65,15 @@ def graphic_rank(title):
     return 1 if GRAPHIC_RE.search(title or '') else 0
 
 
+def form_rank(r):
+    """条目形态降序键：0 = 有正文可读，1 = 图解/视频类或空摘要。
+
+    空摘要视同图解处理 —— 否则标题里没有形态标记、正文却是空的条目
+    会按正常日期排进清单，你点开才发现没东西可读。
+    """
+    return 1 if (GRAPHIC_RE.search(r.get('title') or '') or not r.get('summary')) else 0
+
+
 # --------------------------------------------------------------------------
 # 主流程
 # --------------------------------------------------------------------------
@@ -127,10 +136,13 @@ def main():
     log('待展示候选 %d 条（已展示过的不会再出现）' % len(cands))
 
     # ---- 积压治理：超龄标 stale，停用源存量标 archived（只改状态，可改回）----
+    # 阈值分类型：案例素材不过时（默认 90 天），政策类有时效（默认 28 天）。
     backlog_cfg = cfg.get('backlog') or {}
     stale_days = int(backlog_cfg.get('staleAfterDays', 28))
+    stale_by_type = {str(k): int(v) for k, v in
+                     (backlog_cfg.get('staleAfterDaysByType') or {}).items()}
     enabled_ids = [s['id'] for s in cfg['sources'] if s.get('enabled')]
-    aged = index_age_out(con, stale_days, enabled_ids, now)
+    aged = index_age_out(con, stale_days, enabled_ids, now, by_type=stale_by_type)
     for kind in ('stale', 'archived'):
         ids = aged[kind]
         if not ids:
@@ -139,7 +151,12 @@ def main():
             index_mark(con, ids, kind, when=now.isoformat(timespec='seconds'))
         drop = set(ids)
         cands = [r for r in cands if r['id'] not in drop]
-        why = ('超过 %d 天未展示' % stale_days) if kind == 'stale' else '来源已停用'
+        if kind == 'stale':
+            thresh = '、'.join('%s>%d天' % (t, d) for t, d in stale_by_type.items())
+            why = '超龄（%s%s）' % (thresh + ('、' if thresh else ''),
+                                    '其他>%d天' % stale_days)
+        else:
+            why = '来源已停用'
         log('积压治理：%d 条标记 %s（%s）' % (len(ids), kind, why), 'warn')
 
     # ---- 确定性剔除：形态层面的明确噪音 ----
@@ -177,7 +194,7 @@ def main():
     # 第三键 graphic_rank：同一批里让「有正文的版本」排在前，
     # 这样它先被保留，图解版被判重 —— 否则可能留下没有正文的那一条。
     cands.sort(key=lambda r: (order_idx.get(r['type'], len(type_seq)),
-                              graphic_rank(r['title']),
+                              form_rank(r),
                               -(r['date'].timestamp() if r['date'] else 0)))
     known = index_all_titles(con)          # 含已展示的，防止旧条目的改写版再冒出来
     dup_ids = []
@@ -223,7 +240,7 @@ def main():
         if not s or not s.get('enabled'):
             continue
         # 有正文的版本优先于图解/视频类
-        rows.sort(key=lambda r: (graphic_rank(r['title']),
+        rows.sort(key=lambda r: (form_rank(r),
                                  -(r['date'].timestamp() if r['date'] else 0)))
         q = int(s.get('quota', 0))
         kept = rows[:q]
@@ -262,7 +279,7 @@ def main():
                 continue
             pool.extend(r for r in rows if r['id'] not in chosen_ids)
         pool.sort(key=lambda r: (order_idx.get(r['type'], len(type_seq)),
-                                 graphic_rank(r['title']),
+                                 form_rank(r),
                                  -(r['date'].timestamp() if r['date'] else 0)))
         for r in pool:
             if len(picked) >= target:

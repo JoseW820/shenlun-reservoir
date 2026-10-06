@@ -192,6 +192,19 @@ class TestIndex:
         assert '一条三天前的新鲜事标题' not in stale_titles
         assert aged['archived'] == []
 
+    def test_age_out_by_type(self):
+        """分类型阈值：案例型 90 天不死，论述型 28 天到期。"""
+        con = _mem_db()
+        gk.index_insert(con, [_row('https://a/case', '六十天前的基层治理案例', 's1', 60, '案例型'),
+                              _row('https://a/disc', '六十天前的政策理论文章', 's1', 60, '论述型')],
+                        '2026-10-05')
+        aged = gk.index_age_out(con, 28, ['s1'], datetime.now(),
+                                by_type={'案例型': 90})
+        stale_urls = {con.execute('SELECT nurl FROM items WHERE id=?', (i,)).fetchone()[0]
+                      for i in aged['stale']}
+        assert 'https://a/case' not in stale_urls     # 60 < 90，案例还活着
+        assert 'https://a/disc' in stale_urls         # 60 > 28，论述已超龄
+
     def test_age_out_archived_disabled_source(self):
         con = _mem_db()
         gk.index_insert(con, [_row('https://a/x', '停用来源里的一条新内容', 'gone', 1)],
@@ -224,3 +237,9 @@ class TestJunk:
     def test_graphic_rank(self):
         assert wk.graphic_rank('一图读懂《十四五规划》') == 1
         assert wk.graphic_rank('《十四五规划》正式印发') == 0
+
+    def test_form_rank_empty_summary(self):
+        """空摘要视同图解降序：标题没形态词但正文为空的也排到后面。"""
+        assert wk.form_rank({'title': '普通标题', 'summary': '有正文'}) == 0
+        assert wk.form_rank({'title': '普通标题', 'summary': ''}) == 1
+        assert wk.form_rank({'title': '一图读懂《X》', 'summary': '有正文'}) == 1
