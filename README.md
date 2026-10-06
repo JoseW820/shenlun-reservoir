@@ -37,6 +37,13 @@
 
 ## 快速开始
 
+### 让 AI agent 帮你装（最省事）
+
+把仓库地址丢给你的 AI 编程助手，说「照 AGENT.md 帮我装」。它会自动探测路径、
+生成配置、装好 RSSHub 并自检 —— 不用手改配置文件。
+
+### 自己装
+
 | 依赖 | 要求 | 说明 |
 |---|---|---|
 | **Python** | 3.8+ | **零第三方依赖**，不需要 `pip install` |
@@ -45,24 +52,23 @@
 | **Zotero** | 7+ | *可选*。没有也能跑，只少一层「已存档去重」 |
 
 ```powershell
-# ① 装 RSSHub —— 必须放纯英文路径（中文路径会让 pnpm 装不上）
-git clone --depth 1 https://github.com/DIYgod/RSSHub.git D:\rsshub-engine
-cd D:\rsshub-engine
-$env:CI='true'; corepack pnpm install      # 约 700 MB / 5-15 分钟
+# ① 把本仓库放到 D:\公考工作流
 
-# ② 把本仓库放到 D:\公考工作流
-
-# ③ 生成配置：复制模板，改那 4 个路径
+# ② 一键安装（自动探测路径 → 生成配置 → 装 RSSHub → 自检）
 cd D:\公考工作流
-copy sources.example.json sources.json
-notepad sources.json
+python install.py --yes
 
-# ④ 手动跑一次
+# ③ 手动跑一次
 python fetch_daily.py                      # 抓取入库（需联网）
 python weekly_digest.py                    # 生成清单到桌面
 
-# ⑤ 注册定时任务（可选，见使用手册第二节）
+# ④ 注册定时任务（可选，见使用手册第二节）
 ```
+
+> `install.py` 会连 `pnpm build` 一起做 —— 不 build 就只能以 dev 模式跑，
+> 首次启动要现场编译全部路由，实测 120 秒超时；build 过之后启动约 2 秒。
+> 只想先看看环境合不合格，用 `python install.py --check`（不写任何文件）。
+> 已经装过 RSSHub 的话，用 `--skip-rsshub` 只生成配置。
 
 清单是一份 HTML（另有 MD / JSON），每条含**标题、来源、日期、摘要、「建议归入」哪个 Zotero 集合**
 （样子见[开头的截图](#shenlun-reservoir)）。日常就三个动作：
@@ -143,6 +149,7 @@ python weekly_digest.py                    # 生成清单到桌面
 
 | 文件 | 内容 |
 |---|---|
+| [AGENT.md](AGENT.md) | **给 AI agent 的安装协议**：一键装、四个硬约束、常见失败处理 |
 | [docs/使用手册.md](docs/使用手册.md) | **完整文档**：操作步骤、定时任务、配置详解、去重机制、排错、设计依据 |
 | [docs/news-pipeline-research.md](docs/news-pipeline-research.md) | RSSHub 路由与开源工具调研 |
 

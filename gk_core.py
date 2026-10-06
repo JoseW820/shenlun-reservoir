@@ -40,9 +40,12 @@ def setup_logfile(name, keep_days=14):
     """stdout 之外同时写 logs/<name>-YYYYMMDD.log。
 
     计划任务是隐藏运行的，失败时只能看到退出码 —— 文件日志是唯一的现场。
-    保留最近 keep_days 天。
+    保留最近 keep_days 天。name 传 None 则只留 stdout（安装脚本用，不留日志）。
     """
     global _LOG_FILE
+    if name is None:
+        _LOG_FILE = None
+        return None
     d = HERE / 'logs'
     d.mkdir(exist_ok=True)
     cutoff = time.time() - keep_days * 86400
